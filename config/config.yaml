@@ -1,0 +1,10 @@
+server:
+  port: 8081
+
+application:
+  http:
+    timeout: 10
+  log:
+    level: "info"
+  proxy:
+    target: "http://localhost:8080"
