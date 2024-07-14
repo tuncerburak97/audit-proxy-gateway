@@ -18,5 +18,6 @@ RUN go build -o main .
 # 8080 portunu dışa aç
 EXPOSE 8081
 
+
 # Çalıştır komutunu belirt
 CMD ["./main"]
