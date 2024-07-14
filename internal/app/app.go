@@ -4,10 +4,10 @@ import (
 	"audit-proxy-gateway/internal/client"
 	_ "audit-proxy-gateway/internal/client"
 	"audit-proxy-gateway/internal/config"
+	"audit-proxy-gateway/internal/metrics"
 	"audit-proxy-gateway/internal/proxy"
 	logger2 "audit-proxy-gateway/pkg/logger"
 	"fmt"
-
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -21,7 +21,16 @@ func InitApp() *fiber.App {
 	client.InitClient()
 
 	app := fiber.New()
-	app.All("/*", proxy.ReverseProxy)
+	app.Use(metrics.TrackMetrics)
+
+	app.All("/*", func(c *fiber.Ctx) error {
+		if c.Path() == "/metrics" {
+			return c.Next()
+		}
+		return proxy.ReverseProxy(c)
+	})
+
+	app.Get("/metrics", metrics.MetricsEndpoint)
 
 	return app
 }

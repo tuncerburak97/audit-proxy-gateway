@@ -2,12 +2,14 @@ package proxy
 
 import (
 	"audit-proxy-gateway/internal/config"
+	"audit-proxy-gateway/pkg/logger"
+	"bytes"
 	"github.com/gofiber/fiber/v2"
+	"github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strings"
 )
 
 type FiberResponseWriter struct {
@@ -28,59 +30,31 @@ func (frw *FiberResponseWriter) Write(b []byte) (int, error) {
 }
 
 func ReverseProxy(c *fiber.Ctx) error {
-	cfg := config.GetConfig()
-	target := cfg.Application.Proxy.Target
+	cnf := config.GetConfig()
+	target := cnf.Application.Proxy.Target
 
 	targetURL, err := url.Parse(target)
 	if err != nil {
+		logger.GetLogger().Errorf("Failed to parse target URL: %v", err)
 		return err
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(targetURL)
 
-	// Create a new HTTP request for the proxy
-	req, err := http.NewRequest(c.Method(), targetURL.String(), io.NopCloser(strings.NewReader(string(c.Body()))))
+	req, err := createProxyRequest(c, targetURL)
 	if err != nil {
+		logrus.Errorf("Failed to create proxy request: %v", err)
 		return err
 	}
 
-	// Copy headers from the original request
-	req.Header = make(http.Header)
-	c.Request().Header.VisitAll(func(key, value []byte) {
-		req.Header.Set(string(key), string(value))
-	})
-
-	// Set X-Forwarded-For header
-	req.Header.Set("X-Forwarded-For", c.IP())
-
-	// Set the original host header
-	req.Host = targetURL.Host
-
-	// Custom director to modify the request
 	proxy.Director = func(req *http.Request) {
-		req.URL.Scheme = targetURL.Scheme
-		req.URL.Host = targetURL.Host
-		req.URL.Path = c.OriginalURL()
-		req.URL.RawQuery = string(c.Request().URI().QueryString())
+		customDirector(req, c, targetURL)
 	}
 
-	// Capture the response from the proxy and copy it to the Fiber response
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		c.Response().SetStatusCode(resp.StatusCode)
-		for key, values := range resp.Header {
-			for _, value := range values {
-				c.Set(key, value)
-			}
-		}
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-		c.Send(body)
-		return nil
+		return modifyResponse(c, resp)
 	}
 
-	// Serve the proxy request using a custom FiberResponseWriter
 	frw := &FiberResponseWriter{
 		Response: &http.Response{
 			Header: http.Header{},
@@ -89,5 +63,52 @@ func ReverseProxy(c *fiber.Ctx) error {
 	}
 
 	proxy.ServeHTTP(frw, req)
+	return nil
+}
+
+func createProxyRequest(c *fiber.Ctx, targetURL *url.URL) (*http.Request, error) {
+	reqBody := bytes.NewReader(c.Body())
+	req, err := http.NewRequest(c.Method(), targetURL.String(), reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	copyHeaders(c, req)
+	req.Header.Set("X-Forwarded-For", c.IP())
+	req.Host = targetURL.Host
+
+	logger.GetLogger().Info("Request created successfully with body: ", string(c.Body()))
+	return req, nil
+}
+
+func copyHeaders(c *fiber.Ctx, req *http.Request) {
+	req.Header = make(http.Header)
+	c.Request().Header.VisitAll(func(key, value []byte) {
+		req.Header.Set(string(key), string(value))
+	})
+}
+
+func customDirector(req *http.Request, c *fiber.Ctx, targetURL *url.URL) {
+	req.URL.Scheme = targetURL.Scheme
+	req.URL.Host = targetURL.Host
+	req.URL.Path = c.OriginalURL()
+	req.URL.RawQuery = string(c.Request().URI().QueryString())
+}
+
+func modifyResponse(c *fiber.Ctx, resp *http.Response) error {
+	c.Response().SetStatusCode(resp.StatusCode)
+	for key, values := range resp.Header {
+		for _, value := range values {
+			c.Set(key, value)
+		}
+	}
+	_, err := io.Copy(c.Response().BodyWriter(), resp.Body)
+	if err != nil {
+		logger.GetLogger().Errorf("Failed to copy response body: %v", err)
+		return err
+	}
+
+	logger.GetLogger().Info(
+		"Response headers copied successfully. Status code: ", resp.StatusCode, " Headers: ", resp.Header)
 	return nil
 }
