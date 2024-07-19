@@ -1,6 +1,8 @@
-# Build ve Çalıştırma aşaması aynı imaj üzerinde
-FROM golang:1.23
+# Audit Proxy Gateway Dockerfile
 
+FROM golang:1.22
+
+# Çalışma dizinini /app olarak ayarla
 WORKDIR /app
 
 # go mod ve go.sum dosyalarını kopyala
@@ -13,11 +15,10 @@ RUN go mod download
 COPY . .
 
 # Uygulamayı derle
-RUN go build -o main .
+RUN go build -o audit-proxy-gateway ./cmd/main.go
 
-# 8080 portunu dışa aç
+# 8081 portunu dışa aç
 EXPOSE 8081
 
-
 # Çalıştır komutunu belirt
-CMD ["./main"]
+CMD ["./audit-proxy-gateway"]
